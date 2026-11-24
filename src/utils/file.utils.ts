@@ -69,3 +69,26 @@ export function copyFileSafely(src: string, dest: string): void {
   ensureDir(path.dirname(dest));
   fs.copyFileSync(src, dest);
 }
+
+/**
+ * Sanitize text to remove or replace broken Unicode, replacement diamonds (\uFFFD),
+ * emojis, and non-standard symbols that cause rendering issues in Windows consoles.
+ */
+export function sanitizeUnicode(text: string): string {
+  if (!text) return '';
+  return text
+    // Remove the replacement character / diamond symbol (\uFFFD)
+    .replace(/\uFFFD/g, '')
+    // Normalize smart/curly quotes to ASCII quotes
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    // Normalize dashes and arrows
+    .replace(/[\u2013\u2014]/g, '-')
+    .replace(/\u2192/g, '->')
+    .replace(/\u2190/g, '<-')
+    // Remove emojis and miscellaneous symbols (U+1F300 to U+1FAFF, U+2600 to U+27BF)
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '')
+    // Normalize repeated whitespace
+    .replace(/\s+/g, ' ')
+    .trim();
+}

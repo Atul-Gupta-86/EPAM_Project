@@ -1,5 +1,6 @@
 import Table from 'cli-table3';
 import pc from 'picocolors';
+import { sanitizeUnicode } from './file.utils.js';
 
 export interface ToolSummary {
   tool: string;
@@ -116,13 +117,16 @@ export function renderFindingsTable(findings: FindingRow[], limit = 25): string 
     }
 
     const shortLoc = `${f.file}:${f.line}`;
+    const cleanRuleId = sanitizeUnicode(f.ruleId);
+    const cleanMsg = sanitizeUnicode(f.message);
+
     table.push([
       pc.dim(String(f.id)),
       pc.gray(f.tool),
-      pc.gray(f.ruleId.length > 22 ? f.ruleId.slice(0, 21) + '…' : f.ruleId),
+      pc.gray(cleanRuleId.length > 22 ? cleanRuleId.slice(0, 21) + '…' : cleanRuleId),
       sevFormatted,
       pc.dim(shortLoc.length > 30 ? '…' + shortLoc.slice(-29) : shortLoc),
-      pc.gray(f.message.length > 80 ? f.message.slice(0, 77) + '…' : f.message)
+      pc.gray(cleanMsg.length > 80 ? cleanMsg.slice(0, 77) + '…' : cleanMsg)
     ]);
   }
 

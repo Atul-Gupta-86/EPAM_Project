@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readJsonFile, writeJsonFile, ensureDir } from '../utils/file.utils.js';
+import { readJsonFile, writeJsonFile, ensureDir, sanitizeUnicode } from '../utils/file.utils.js';
 import type { SarifReport, SarifRun } from '../tools_execution/trivy.tool.js';
 
 export interface StandardizationResult {
@@ -12,7 +12,7 @@ export interface StandardizationResult {
 
 /**
  * Standardize SARIF report to canonical SARIF 2.1.0 without mutating underlying vulnerability data.
- * Adheres strictly to OASIS Standard SARIF 2.1.0.
+ * Adheres strictly to OASIS Standard SARIF 2.1.0 and cleanses broken replacement characters.
  */
 export function standardizeSarif(
   combinedSarifPath: string,
@@ -51,9 +51,12 @@ export function standardizeSarif(
     };
 
     for (const res of rawRun.results || []) {
-      // Retain 100% exact message and ruleId
-      const ruleId = res.ruleId || 'UNKNOWN_RULE';
-      const messageText = typeof res.message?.text === 'string' ? res.message.text : JSON.stringify(res.message);
+      // Retain exact ruleId & message, cleansed of broken diamond characters
+      const rawRuleId = res.ruleId || 'UNKNOWN_RULE';
+      const ruleId = sanitizeUnicode(rawRuleId);
+
+      const rawMsg = typeof res.message?.text === 'string' ? res.message.text : JSON.stringify(res.message);
+      const messageText = sanitizeUnicode(rawMsg);
 
       // Map level compliant with SARIF 2.1.0 while preserving exact original level in properties
       let level = res.level ? String(res.level).toLowerCase() : 'warning';
@@ -69,7 +72,7 @@ export function standardizeSarif(
         }
       }
 
-      // Preserve full locations with zero alterations
+      // Preserve full locations
       const locations = res.locations ? JSON.parse(JSON.stringify(res.locations)) : [
         {
           physicalLocation: {
@@ -103,7 +106,6 @@ export function standardizeSarif(
     totalStandardizedResults += run.results.length;
   }
 
-  // Ensure output directory exists and write
   ensureDir(path.dirname(targetOutput));
   writeJsonFile(targetOutput, standardized);
 
