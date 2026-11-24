@@ -1,4 +1,4 @@
-  import { execSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
 import { writeJsonFile } from '../utils/file.utils.js';
@@ -14,7 +14,7 @@ export async function runSemgrep(
   const outputFile = path.join(resultDir, 'semgrep_result.sarif.json');
   const semgrepCmd = process.env.SEMGREP_PATH || 'semgrep';
 
-  // Remove any legacy temp file if it exists
+  // Ensure any legacy temp file is cleaned up
   const legacyTemp = path.join(resultDir, 'temp_semgrep.sarif');
   if (fs.existsSync(legacyTemp)) {
     try { fs.unlinkSync(legacyTemp); } catch { /* ignore */ }
@@ -25,40 +25,38 @@ export async function runSemgrep(
       fs.mkdirSync(resultDir, { recursive: true });
     }
 
-    // Direct output to semgrep_result.sarif.json (no temp files)
-    const cmd = `"${semgrepCmd}" scan --sarif --output "${outputFile}" "${targetPath}"`;
+    // Execute semgrep using spawnSync with explicit arguments for Windows compatibility
+    const semgrepArgs = ['scan', '--sarif', '--output', outputFile, targetPath];
 
-    let stderrOutput = '';
-    try {
-      execSync(cmd, {
-        // stdin: ignore, stdout: ignore (prevents pipe deadlock from MBs of progress output), stderr: pipe (captures actual errors)
-        stdio: ['ignore', 'ignore', 'pipe'],
-        maxBuffer: 50 * 1024 * 1024,
-        timeout: 300000 // 5 minutes timeout for large codebases
-      });
-    } catch (cmdErr: unknown) {
-      if (cmdErr && typeof cmdErr === 'object' && 'stderr' in cmdErr) {
-        stderrOutput = String((cmdErr as { stderr?: Buffer }).stderr || '').trim();
-      }
-    }
+    const result = spawnSync(semgrepCmd, semgrepArgs, {
+      encoding: 'utf8',
+      shell: true,
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: 300000 // 5 minutes timeout
+    });
 
     // Validate that actual output file was generated and contains valid SARIF JSON
     if (fs.existsSync(outputFile) && fs.statSync(outputFile).size > 0) {
-      const content = fs.readFileSync(outputFile, 'utf8');
-      const sarifData: SarifReport = JSON.parse(content);
+      try {
+        const content = fs.readFileSync(outputFile, 'utf8');
+        const sarifData: SarifReport = JSON.parse(content);
 
-      if (Array.isArray(sarifData?.runs)) {
-        return {
-          tool: 'Semgrep',
-          success: true,
-          sarif: sarifData,
-          outputFilePath: outputFile
-        };
+        if (Array.isArray(sarifData?.runs)) {
+          return {
+            tool: 'Semgrep',
+            success: true,
+            sarif: sarifData,
+            outputFilePath: outputFile
+          };
+        }
+      } catch (parseErr) {
+        throw new Error(`Failed to parse Semgrep SARIF report: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
       }
     }
 
-    // If output file is missing or empty, throw error with captured stderr
-    throw new Error(stderrOutput || 'Semgrep did not produce valid SARIF output');
+    // Capture exact failure details from spawnSync
+    const errorDetail = result.error?.message || result.stderr || 'Semgrep did not produce a valid SARIF output file';
+    throw new Error(errorDetail);
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     const fallbackSarif: SarifReport = {
