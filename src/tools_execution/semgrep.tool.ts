@@ -34,34 +34,42 @@ export async function runSemgrep(
       }
     };
 
+    // Flags to prevent hanging:
+    // - Output directly to file to prevent Node pipe buffer overflow/deadlock
+    // - Exclude heavy directories (node_modules, .git, dist, build)
+    // - Use single-threaded job execution to prevent Windows socket deadlocks
+    // - Timeout after 60 seconds
+    const commonExcludes = '--exclude node_modules --exclude .git --exclude dist --exclude build';
+    const commonFlags = `--sarif --output "${tempOut}" --jobs 1 ${commonExcludes}`;
+
     let executed = false;
 
-    // Strategy 1: Run with auto config (Do NOT use --metrics=off as semgrep prohibits it with auto config)
+    // Strategy 1: Fast community security rules (p/default) - avoids registry login prompts/hangs
     try {
-      const cmd = `"${semgrepCmd}" scan --config auto --sarif --output "${tempOut}" --quiet "${targetPath}"`;
-      execSync(cmd, { stdio: 'pipe', encoding: 'utf8', timeout: 300000 });
+      const cmd = `"${semgrepCmd}" scan --config p/default ${commonFlags} "${targetPath}"`;
+      execSync(cmd, { stdio: ['ignore', 'ignore', 'ignore'], timeout: 60000 });
       executed = isOutputFileValid();
     } catch {
-      // Semgrep returns exit code 1 when vulnerabilities/findings exist
+      // Semgrep exits with 1 when findings are detected
       executed = isOutputFileValid();
     }
 
-    // Strategy 2: Fallback to standard community rules (p/default)
+    // Strategy 2: Auto config fallback
     if (!executed) {
       try {
-        const cmd = `"${semgrepCmd}" scan --config p/default --sarif --output "${tempOut}" --quiet "${targetPath}"`;
-        execSync(cmd, { stdio: 'pipe', encoding: 'utf8', timeout: 300000 });
+        const cmd = `"${semgrepCmd}" scan --config auto ${commonFlags} "${targetPath}"`;
+        execSync(cmd, { stdio: ['ignore', 'ignore', 'ignore'], timeout: 60000 });
         executed = isOutputFileValid();
       } catch {
         executed = isOutputFileValid();
       }
     }
 
-    // Strategy 3: Fallback without explicit config flag
+    // Strategy 3: Local/built-in rules fallback
     if (!executed) {
       try {
-        const cmd = `"${semgrepCmd}" scan --sarif --output "${tempOut}" --quiet "${targetPath}"`;
-        execSync(cmd, { stdio: 'pipe', encoding: 'utf8', timeout: 300000 });
+        const cmd = `"${semgrepCmd}" scan ${commonFlags} "${targetPath}"`;
+        execSync(cmd, { stdio: ['ignore', 'ignore', 'ignore'], timeout: 60000 });
         executed = isOutputFileValid();
       } catch {
         executed = isOutputFileValid();
@@ -81,7 +89,7 @@ export async function runSemgrep(
         outputFilePath: outputFile
       };
     } else {
-      throw new Error('Semgrep produced no SARIF output');
+      throw new Error('Semgrep produced no SARIF output or timed out');
     }
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
