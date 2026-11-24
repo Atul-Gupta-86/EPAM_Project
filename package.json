@@ -1,0 +1,33 @@
+{
+  "name": "security-cli-scanner",
+  "version": "1.0.0",
+  "description": "Multi-tool Security Audit CLI with SARIF 2.1.0 Standardization and Validation",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts"
+  },
+  "keywords": [
+    "security",
+    "sarif",
+    "cli",
+    "trivy",
+    "semgrep",
+    "gitleaks"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cli-table3": "^0.6.5",
+    "dotenv": "^16.4.7",
+    "picocolors": "^1.1.1",
+    "prompts": "^2.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/prompts": "^2.4.9",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
