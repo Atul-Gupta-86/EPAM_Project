@@ -13,6 +13,7 @@ export async function runSemgrep(
 ): Promise<ToolExecutionResult> {
   const outputFile = path.join(resultDir, 'semgrep_result.sarif.json');
   const semgrepCmd = process.env.SEMGREP_PATH || 'semgrep';
+  const semgrepConfig = process.env.SEMGREP_CONFIG || 'p/default';
 
   try {
     if (!fs.existsSync(resultDir)) {
@@ -20,8 +21,13 @@ export async function runSemgrep(
     }
 
     const tempOut = path.join(resultDir, 'temp_semgrep.sarif');
+    const tempErr = path.join(resultDir, 'temp_semgrep.err');
+
     if (fs.existsSync(tempOut)) {
       try { fs.unlinkSync(tempOut); } catch { /* ignore */ }
+    }
+    if (fs.existsSync(tempErr)) {
+      try { fs.unlinkSync(tempErr); } catch { /* ignore */ }
     }
 
     const isOutputFileValid = (): boolean => {
@@ -34,52 +40,30 @@ export async function runSemgrep(
       }
     };
 
-    // Flags to prevent hanging:
-    // - Output directly to file to prevent Node pipe buffer overflow/deadlock
-    // - Exclude heavy directories (node_modules, .git, dist, build)
-    // - Use single-threaded job execution to prevent Windows socket deadlocks
-    // - Timeout after 60 seconds
-    const commonExcludes = '--exclude node_modules --exclude .git --exclude dist --exclude build';
-    const commonFlags = `--sarif --output "${tempOut}" --jobs 1 ${commonExcludes}`;
+    // Construct robust semgrep execution command
+    // Exclude large vendor & build folders that cause extreme slowdowns
+    const excludes = '--exclude=node_modules --exclude=.git --exclude=dist --exclude=build --exclude=vendor';
+    const cmd = `"${semgrepCmd}" scan --config "${semgrepConfig}" --sarif --output "${tempOut}" --no-git ${excludes} "${targetPath}"`;
 
-    let executed = false;
-
-    // Strategy 1: Fast community security rules (p/default) - avoids registry login prompts/hangs
+    let stderrOutput = '';
     try {
-      const cmd = `"${semgrepCmd}" scan --config p/default ${commonFlags} "${targetPath}"`;
-      execSync(cmd, { stdio: ['ignore', 'ignore', 'ignore'], timeout: 60000 });
-      executed = isOutputFileValid();
-    } catch {
-      // Semgrep exits with 1 when findings are detected
-      executed = isOutputFileValid();
-    }
-
-    // Strategy 2: Auto config fallback
-    if (!executed) {
-      try {
-        const cmd = `"${semgrepCmd}" scan --config auto ${commonFlags} "${targetPath}"`;
-        execSync(cmd, { stdio: ['ignore', 'ignore', 'ignore'], timeout: 60000 });
-        executed = isOutputFileValid();
-      } catch {
-        executed = isOutputFileValid();
+      execSync(cmd, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 50 * 1024 * 1024,
+        timeout: 180000 // 3 minutes timeout
+      });
+    } catch (err: unknown) {
+      // Semgrep returns exit code 1 when findings are present; check if valid SARIF was generated
+      if (err && typeof err === 'object' && 'stderr' in err) {
+        stderrOutput = String((err as { stderr?: Buffer }).stderr || '').trim();
       }
     }
 
-    // Strategy 3: Local/built-in rules fallback
-    if (!executed) {
-      try {
-        const cmd = `"${semgrepCmd}" scan ${commonFlags} "${targetPath}"`;
-        execSync(cmd, { stdio: ['ignore', 'ignore', 'ignore'], timeout: 60000 });
-        executed = isOutputFileValid();
-      } catch {
-        executed = isOutputFileValid();
-      }
-    }
-
-    if (executed && fs.existsSync(tempOut)) {
+    if (isOutputFileValid()) {
       const content = fs.readFileSync(tempOut, 'utf8');
       const sarifData: SarifReport = JSON.parse(content);
       try { fs.unlinkSync(tempOut); } catch { /* ignore */ }
+      try { if (fs.existsSync(tempErr)) fs.unlinkSync(tempErr); } catch { /* ignore */ }
 
       writeJsonFile(outputFile, sarifData);
       return {
@@ -89,7 +73,13 @@ export async function runSemgrep(
         outputFilePath: outputFile
       };
     } else {
-      throw new Error('Semgrep produced no SARIF output or timed out');
+      // Clean up empty temp file
+      if (fs.existsSync(tempOut)) {
+        try { fs.unlinkSync(tempOut); } catch { /* ignore */ }
+      }
+
+      const failureReason = stderrOutput || 'Semgrep did not produce a valid SARIF output file (check network connection or rule configuration)';
+      throw new Error(failureReason);
     }
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
