@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { execSync } from 'node:child_process';
-import prompts from 'prompts';
+import pc from 'picocolors';
 
 import { getDatabase } from '../db/connection.js';
 import { logger } from '../utils/logger.utils.js';
@@ -39,6 +39,8 @@ export interface CommandContext {
   exportsDir: string;
 }
 
+export type AskQuestionCallback = (query: string) => Promise<string>;
+
 export class CommandController {
   private ctx: CommandContext;
 
@@ -51,7 +53,6 @@ export class CommandController {
       exportsDir: ctx?.exportsDir || path.resolve(process.cwd(), 'exports')
     };
 
-    // Ensure all required workspace directories exist
     ensureDir(this.ctx.toolsResultDir);
     ensureDir(this.ctx.combinedResultDir);
     ensureDir(this.ctx.validatorDir);
@@ -62,7 +63,7 @@ export class CommandController {
   /**
    * Main entry point for command routing
    */
-  async handleCommand(input: string): Promise<{ shouldQuit?: boolean }> {
+  async handleCommand(input: string, askCallback?: AskQuestionCallback): Promise<{ shouldQuit?: boolean }> {
     const trimmed = input.trim();
     if (!trimmed) return {};
 
@@ -76,7 +77,7 @@ export class CommandController {
         return {};
 
       case 'scan':
-        await this.handleScan(args);
+        await this.handleScan(args, askCallback);
         return {};
 
       case 'tools':
@@ -101,7 +102,6 @@ export class CommandController {
 
       case 'quit':
       case 'exit':
-        logger.info('Exiting Security CLI Scanner.');
         return { shouldQuit: true };
 
       default:
@@ -111,18 +111,11 @@ export class CommandController {
     }
   }
 
-  /**
-   * /help handler
-   */
   handleHelp(): void {
     console.log(renderHelpMenu(false));
   }
 
-  /**
-   * /tools handler - Check system security tools status
-   */
   async handleTools(): Promise<void> {
-    logger.info('Inspecting system security scanning tools...');
     const checkTool = (name: string, cmd: string, verFlag = '--version') => {
       let isFileExists = false;
       try {
@@ -139,7 +132,7 @@ export class CommandController {
         return { name, installed: true, path: cmd, version: verLine };
       } catch {
         if (isFileExists) {
-          return { name, installed: true, path: cmd, version: 'Detected (Binary Available)' };
+          return { name, installed: true, path: cmd, version: 'Detected' };
         }
         return { name, installed: false, path: cmd, version: 'Not found in PATH' };
       }
@@ -158,51 +151,33 @@ export class CommandController {
     console.log(renderToolsTable(toolsStatus));
   }
 
-  /**
-   * /clear handler - Clears the screen by sliding up terminal buffer
-   */
   handleClear(): void {
-    // Sliding up screen instead of hard reset, preserving user scrollback history
     process.stdout.write('\x1b[2J\x1b[H\n'.repeat(2));
-    logger.banner('=== Console Refreshed ===');
   }
 
-  /**
-   * /result handler - Displays last scan summary in standard tabular format
-   */
   handleResult(): void {
-    const db = getDatabase();
-    const latestScan = db.getLatestScan();
     const combinedFile = path.join(this.ctx.combinedResultDir, 'combined_result.sarif.json');
 
     if (!fs.existsSync(combinedFile)) {
-      logger.warn('No scan results found yet. Run "/scan <repo_path>" to perform a scan.');
+      logger.info('No scan results found.');
       return;
     }
 
     try {
       const sarif = readJsonFile<SarifReport>(combinedFile);
       const summaries = this.extractSummariesFromSarif(sarif);
-
-      logger.banner('=== LAST SCAN RESULT ===');
-      if (latestScan) {
-        console.log(`Target: ${latestScan.target_path} | Time: ${latestScan.timestamp} | Status: ${latestScan.status}`);
-      }
       console.log(renderScanSummaryTable(summaries));
     } catch (err) {
-      logger.error(`Failed to read combined result file: ${err instanceof Error ? err.message : String(err)}`);
+      logger.error(`Failed to read results: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
-  /**
-   * /findings handler - Displays granular vulnerability findings table
-   */
   handleFindings(): void {
     const db = getDatabase();
     const latestScan = db.getLatestScan();
 
     if (!latestScan) {
-      logger.warn('No scan records found in database. Please run a scan first.');
+      logger.info('No scan records found in database.');
       return;
     }
 
@@ -217,20 +192,16 @@ export class CommandController {
       message: f.message
     }));
 
-    logger.banner(`=== VULNERABILITY FINDINGS (${findings.length} TOTAL) ===`);
     console.log(renderFindingsTable(rows));
   }
 
-  /**
-   * /export handler - Saves/downloads the result file of the last scan
-   */
   handleExport(customPath?: string): void {
     const combinedFile = path.join(this.ctx.combinedResultDir, 'combined_result.sarif.json');
     const nonnormalizedFile = path.join(this.ctx.nonnormalizedDir, 'nonnormalized_result.sarif.json');
 
     const sourceFile = fs.existsSync(nonnormalizedFile) ? nonnormalizedFile : combinedFile;
     if (!fs.existsSync(sourceFile)) {
-      logger.warn('No scan result available to export. Run a scan first.');
+      logger.info('No scan result available to export.');
       return;
     }
 
@@ -244,17 +215,13 @@ export class CommandController {
 
     try {
       copyFileSafely(sourceFile, destFile);
-      logger.success(`Scan result successfully exported to: ${destFile}`);
+      logger.info(`Scan result exported to: ${pc.dim(destFile)}`);
     } catch (err) {
       logger.error(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
-  /**
-   * /scan <repo_path> handler
-   */
-  async handleScan(repoArg: string): Promise<void> {
-    // 1. Validate argument
+  async handleScan(repoArg: string, askCallback?: AskQuestionCallback): Promise<void> {
     const validation = validateRepoPath(repoArg);
     if (!validation.valid || !validation.resolvedPath) {
       logger.error(validation.error || 'Invalid repository path');
@@ -263,63 +230,44 @@ export class CommandController {
     }
 
     const targetPath = validation.resolvedPath;
-    logger.info(`Target repository: ${targetPath}`);
 
-    // 2. Tool selection: Interactive if TTY, or default to all configured tools
-    let selectedTools: string[] = [];
-    if (process.stdin.isTTY) {
-      try {
-        const response = await prompts({
-          type: 'multiselect',
-          name: 'tools',
-          message: 'Select security scanning tools to execute:',
-          choices: [
-            { title: 'Trivy (Vulnerability & Misconfigurations)', value: 'trivy', selected: true },
-            { title: 'Semgrep (Static Code Analysis SAST)', value: 'semgrep', selected: true },
-            { title: 'Gitleaks (Secrets & API Keys Detection)', value: 'gitleaks', selected: true }
-          ],
-          hint: '- Space to select. Return to submit',
-          instructions: false
-        });
-        selectedTools = response.tools || [];
-      } catch {
-        selectedTools = ['trivy', 'semgrep', 'gitleaks'];
+    // Ask user which tools to run
+    let selectedTools: string[] = ['trivy', 'semgrep', 'gitleaks'];
+    if (askCallback) {
+      const answer = await askCallback(pc.dim('Which tools would you like to run? [1: Trivy, 2: Semgrep, 3: Gitleaks, all: All] (default: all): '));
+      const lower = answer.toLowerCase().trim();
+      if (lower && lower !== 'all') {
+        const picked: string[] = [];
+        if (lower.includes('1') || lower.includes('trivy')) picked.push('trivy');
+        if (lower.includes('2') || lower.includes('semgrep')) picked.push('semgrep');
+        if (lower.includes('3') || lower.includes('gitleaks')) picked.push('gitleaks');
+        if (picked.length > 0) {
+          selectedTools = picked;
+        }
       }
-    } else {
-      selectedTools = ['trivy', 'semgrep', 'gitleaks'];
     }
 
-    if (selectedTools.length === 0) {
-      selectedTools = ['trivy', 'semgrep', 'gitleaks'];
-    }
-
-    logger.info(`Starting audit with tools: ${selectedTools.join(', ').toUpperCase()}...`);
-
-    // 3. Sequential Execution of Tools
+    // Execute selected tools
     const executionResults: ToolExecutionResult[] = [];
-    let hasFatalScanFailure = false;
-
     for (const toolKey of selectedTools) {
       try {
         if (toolKey === 'trivy') {
-          logger.info('Executing Trivy scanner...');
           const res = await runTrivy(targetPath, this.ctx.toolsResultDir);
           executionResults.push(res);
-          if (!res.success && res.error) logger.warn(`Trivy notification: ${res.error}`);
         } else if (toolKey === 'semgrep') {
-          logger.info('Executing Semgrep scanner...');
           const res = await runSemgrep(targetPath, this.ctx.toolsResultDir);
           executionResults.push(res);
-          if (!res.success && res.error) logger.warn(`Semgrep notification: ${res.error}`);
         } else if (toolKey === 'gitleaks') {
-          logger.info('Executing Gitleaks scanner...');
           const res = await runGitleaks(targetPath, this.ctx.toolsResultDir);
           executionResults.push(res);
-          if (!res.success && res.error) logger.warn(`Gitleaks notification: ${res.error}`);
         }
       } catch (err) {
-        hasFatalScanFailure = true;
-        logger.error(`Critical error running ${toolKey}: ${err instanceof Error ? err.message : String(err)}`);
+        executionResults.push({
+          tool: toolKey,
+          success: false,
+          outputFilePath: '',
+          error: err instanceof Error ? err.message : String(err)
+        });
       }
     }
 
@@ -330,7 +278,7 @@ export class CommandController {
       return;
     }
 
-    // 4. Combine all tool results into one SARIF document
+    // Combine results into one SARIF document
     const combinedSarif: SarifReport = {
       $schema: 'https://docs.oasis-open.org/sarif/sarif/v2.1.0/cos01/schemas/sarif-schema-2.1.0.json',
       version: '2.1.0',
@@ -339,7 +287,9 @@ export class CommandController {
 
     const individualFiles: string[] = [];
     for (const r of executionResults) {
-      individualFiles.push(r.outputFilePath);
+      if (r.outputFilePath && fs.existsSync(r.outputFilePath)) {
+        individualFiles.push(r.outputFilePath);
+      }
       if (r.sarif && Array.isArray(r.sarif.runs)) {
         combinedSarif.runs.push(...r.sarif.runs);
       }
@@ -348,7 +298,7 @@ export class CommandController {
     const combinedFile = path.join(this.ctx.combinedResultDir, 'combined_result.sarif.json');
     writeJsonFile(combinedFile, combinedSarif);
 
-    // 5. Sequential Validation Pipeline (executed silently without console logging)
+    // Silent Validator Pipeline (no console printing)
     const stdResult = standardizeSarif(combinedFile);
     validateAndStoreNonnormalized(
       stdResult.outputFilePath,
@@ -356,7 +306,7 @@ export class CommandController {
       this.ctx.nonnormalizedDir
     );
 
-    // 6. Record scan & findings in Database
+    // Persistence in DB
     const scanId = `scan-${Date.now()}`;
     const summaries = this.extractSummariesFromSarif(stdResult.standardizedSarif);
 
@@ -382,23 +332,24 @@ export class CommandController {
       high_count: totalHigh,
       medium_count: totalMed,
       low_count: totalLow,
-      status: hasFatalScanFailure ? 'PARTIAL_SUCCESS' : 'SUCCESS'
+      status: successfulRuns.length === selectedTools.length ? 'SUCCESS' : 'PARTIAL_SUCCESS'
     });
 
-    // Extract individual findings to save in DB
     const dbFindings = this.extractDbFindings(scanId, stdResult.standardizedSarif);
     db.saveFindings(dbFindings);
 
-    // 7. CLI Output - Severity Counts per Tool
-    console.log('');
+    // Show issue count per tool with low-contrast muted styling
     for (const s of summaries) {
-      console.log(`${s.tool} - high ${s.high} , medium ${s.medium} , low ${s.low}`);
+      const highStr = s.high > 0 ? pc.dim(pc.red(String(s.high))) : pc.dim('0');
+      const medStr = s.medium > 0 ? pc.dim(pc.yellow(String(s.medium))) : pc.dim('0');
+      const lowStr = s.low > 0 ? pc.dim(pc.blue(String(s.low))) : pc.dim('0');
+      console.log(`${pc.gray(s.tool)} - ${pc.dim('high')} ${highStr}, ${pc.dim('medium')} ${medStr}, ${pc.dim('low')} ${lowStr}`);
     }
+
+    // Display standard tabular summary
+    console.log(renderScanSummaryTable(summaries));
   }
 
-  /**
-   * Helper to compute tool summaries from SARIF runs
-   */
   private extractSummariesFromSarif(sarif: SarifReport): ToolSummary[] {
     const map = new Map<string, { high: number; medium: number; low: number; total: number }>();
 
@@ -418,8 +369,6 @@ export class CommandController {
           counts.high++;
         } else if (lvl === 'warning' || origLvl === 'medium' || origLvl === 'moderate') {
           counts.medium++;
-        } else if (lvl === 'note' || origLvl === 'low') {
-          counts.low++;
         } else {
           counts.low++;
         }
@@ -436,9 +385,6 @@ export class CommandController {
     }));
   }
 
-  /**
-   * Helper to extract flat finding records for database persistence
-   */
   private extractDbFindings(scanId: string, sarif: SarifReport) {
     const list = [];
     for (const run of sarif.runs || []) {

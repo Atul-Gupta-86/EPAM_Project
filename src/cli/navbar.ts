@@ -1,3 +1,5 @@
+import pc from 'picocolors';
+
 export interface NavItem {
   name: string;
   command: string;
@@ -5,49 +7,37 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { name: 'help', command: '/help', description: 'Show all commands & usage' },
-  { name: 'scan', command: '/scan <repo_path>', description: 'Run multi-tool vulnerability scan' },
-  { name: 'tools', command: '/tools', description: 'Check security tools status' },
-  { name: 'export', command: '/export [path]', description: 'Export last scan SARIF report' },
-  { name: 'clear', command: '/clear', description: 'Clear screen view' },
-  { name: 'result', command: '/result', description: 'Tabular summary of last scan' },
-  { name: 'findings', command: '/findings', description: 'Detailed list of detected issues' },
-  { name: 'quit', command: '/quit', description: 'Exit application' }
+  { name: 'help', command: 'help', description: 'Show all commands' },
+  { name: 'scan', command: 'scan <repo_path>', description: 'Run security scan (trivy, semgrep, gitleaks)' },
+  { name: 'tools', command: 'tools', description: 'Check security tools status' },
+  { name: 'export', command: 'export [path]', description: 'Export last scan SARIF result' },
+  { name: 'clear', command: 'clear', description: 'Clear screen' },
+  { name: 'result', command: 'result', description: 'Show result of the last scan in tabular format' },
+  { name: 'findings', command: 'findings', description: 'Show detailed list of findings' },
+  { name: 'quit', command: 'quit', description: 'Quit from the app' }
 ];
 
 /**
- * Render fixed hintline navigation bar after each response
+ * Fixed hintline navigation bar with low-contrast muted styling
  */
 export function renderNavBar(): string {
-  const items = NAV_ITEMS.map(item => `[${item.name}]`).join(' ');
-  return `\nHintline: ${items}\n`;
+  return NAV_ITEMS.map(item => `${pc.dim('[')}${pc.cyan(item.name)}${pc.dim(']')}`).join(' ');
 }
 
 /**
- * Render comprehensive help menu (also shown on typo errors)
+ * Low-contrast clean help menu
  */
 export function renderHelpMenu(isTypo = false): string {
   let output = '';
   if (isTypo) {
-    output += 'Unknown command or typo detected!\n';
-    output += 'Here is the list of all available commands you can run:\n\n';
+    output += `${pc.dim(pc.red('Unknown command or typo detected.'))}\n${pc.dim('Available commands:')}\n\n`;
   } else {
-    output += '=== Security Scanner Commands ===\n\n';
+    output += `${pc.dim('Commands:')}\n\n`;
   }
 
   for (const item of NAV_ITEMS) {
-    output += `  ${item.command.padEnd(20)} - ${item.description}\n`;
+    output += `  ${pc.cyan(item.command.padEnd(20))} ${pc.dim('-')} ${pc.gray(item.description)}\n`;
   }
-
-  output += '\nExamples:\n';
-  output += '  /scan .                     Scan current directory\n';
-  output += '  /scan D:\\Projects\\my-app    Scan specific repository\n';
-  output += '  /result                     Display scan summary table\n';
-  output += '  /findings                   View all detailed vulnerabilities\n';
-  output += '  /export ./my-reports        Export SARIF report\n';
-  output += '  /tools                      Inspect Trivy, Semgrep, Gitleaks\n';
-  output += '  /clear                      Reset display viewport\n';
-  output += '  /quit                       Exit scanner\n';
 
   return output;
 }

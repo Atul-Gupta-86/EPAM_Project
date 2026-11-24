@@ -1,4 +1,5 @@
 import Table from 'cli-table3';
+import pc from 'picocolors';
 
 export interface ToolSummary {
   tool: string;
@@ -20,11 +21,22 @@ export interface FindingRow {
 }
 
 /**
- * Render scan summary table in plain text
+ * Render scan summary table in low-contrast muted colors
  */
 export function renderScanSummaryTable(summaries: ToolSummary[]): string {
   const table = new Table({
-    head: ['Tool', 'Status', 'High', 'Medium', 'Low', 'Total Issues']
+    head: [
+      pc.dim(pc.cyan('Tool')),
+      pc.dim(pc.cyan('Status')),
+      pc.dim(pc.red('High')),
+      pc.dim(pc.yellow('Medium')),
+      pc.dim(pc.blue('Low')),
+      pc.dim(pc.cyan('Total Issues'))
+    ],
+    style: {
+      head: [],
+      border: ['grey']
+    }
   });
 
   let totalHigh = 0;
@@ -38,76 +50,112 @@ export function renderScanSummaryTable(summaries: ToolSummary[]): string {
     totalLow += s.low;
     grandTotal += s.total;
 
+    const statusFormatted = s.status === 'SUCCESS'
+      ? pc.dim(pc.green('SUCCESS'))
+      : s.status === 'SKIPPED'
+      ? pc.dim(pc.yellow('SKIPPED'))
+      : pc.dim(pc.red('FAILED'));
+
     table.push([
-      s.tool,
-      s.status,
-      String(s.high),
-      String(s.medium),
-      String(s.low),
-      String(s.total)
+      pc.gray(s.tool),
+      statusFormatted,
+      s.high > 0 ? pc.dim(pc.red(String(s.high))) : pc.dim('0'),
+      s.medium > 0 ? pc.dim(pc.yellow(String(s.medium))) : pc.dim('0'),
+      s.low > 0 ? pc.dim(pc.blue(String(s.low))) : pc.dim('0'),
+      pc.gray(String(s.total))
     ]);
   }
 
   table.push([
-    'TOTAL',
-    '—',
-    String(totalHigh),
-    String(totalMed),
-    String(totalLow),
-    String(grandTotal)
+    pc.dim('TOTAL'),
+    pc.dim('—'),
+    totalHigh > 0 ? pc.dim(pc.red(String(totalHigh))) : pc.dim('0'),
+    totalMed > 0 ? pc.dim(pc.yellow(String(totalMed))) : pc.dim('0'),
+    totalLow > 0 ? pc.dim(pc.blue(String(totalLow))) : pc.dim('0'),
+    pc.gray(String(grandTotal))
   ]);
 
   return table.toString();
 }
 
 /**
- * Render detailed findings table in plain text
+ * Render detailed findings table in low-contrast muted colors
  */
-export function renderFindingsTable(findings: FindingRow[], limit = 50): string {
+export function renderFindingsTable(findings: FindingRow[], limit = 25): string {
   if (findings.length === 0) {
-    return 'No vulnerabilities detected. Target repository is clean.';
+    return pc.gray('No vulnerabilities detected.');
   }
 
   const table = new Table({
-    head: ['#', 'Tool', 'Rule / Vuln ID', 'Severity', 'Location', 'Message'],
-    colWidths: [5, 12, 24, 12, 34, 45],
-    wordWrap: true
+    head: [
+      pc.dim(pc.cyan('#')),
+      pc.dim(pc.cyan('Tool')),
+      pc.dim(pc.cyan('Rule / Vuln ID')),
+      pc.dim(pc.cyan('Severity')),
+      pc.dim(pc.cyan('Location')),
+      pc.dim(pc.cyan('Message'))
+    ],
+    colWidths: [5, 12, 24, 12, 32, 45],
+    wordWrap: true,
+    style: {
+      head: [],
+      border: ['grey']
+    }
   });
 
   const displayList = findings.slice(0, limit);
   for (const f of displayList) {
+    let sevFormatted = pc.gray(f.severity);
+    const sevUpper = f.severity.toUpperCase();
+    if (sevUpper.includes('HIGH') || sevUpper.includes('CRITICAL') || sevUpper === 'ERROR') {
+      sevFormatted = pc.dim(pc.red(f.severity));
+    } else if (sevUpper.includes('MEDIUM') || sevUpper.includes('WARNING')) {
+      sevFormatted = pc.dim(pc.yellow(f.severity));
+    } else if (sevUpper.includes('LOW') || sevUpper.includes('NOTE')) {
+      sevFormatted = pc.dim(pc.blue(f.severity));
+    }
+
     const shortLoc = `${f.file}:${f.line}`;
     table.push([
-      String(f.id),
-      f.tool,
-      f.ruleId.length > 22 ? f.ruleId.slice(0, 21) + '…' : f.ruleId,
-      f.severity,
-      shortLoc.length > 32 ? '…' + shortLoc.slice(-31) : shortLoc,
-      f.message.length > 80 ? f.message.slice(0, 77) + '…' : f.message
+      pc.dim(String(f.id)),
+      pc.gray(f.tool),
+      pc.gray(f.ruleId.length > 22 ? f.ruleId.slice(0, 21) + '…' : f.ruleId),
+      sevFormatted,
+      pc.dim(shortLoc.length > 30 ? '…' + shortLoc.slice(-29) : shortLoc),
+      pc.gray(f.message.length > 80 ? f.message.slice(0, 77) + '…' : f.message)
     ]);
   }
 
   let output = table.toString();
   if (findings.length > limit) {
-    output += `\nShowing ${limit} of ${findings.length} findings. Use /export to view full report.`;
+    output += `\n${pc.dim(`Showing ${limit} of ${findings.length} findings.`)}`;
   }
   return output;
 }
 
 /**
- * Render tool status table in plain text
+ * Render tool status table in low-contrast muted colors
  */
 export function renderToolsTable(tools: { name: string; installed: boolean; path: string; version?: string }[]): string {
   const table = new Table({
-    head: ['Security Tool', 'Status', 'Executable Path', 'Version']
+    head: [
+      pc.dim(pc.cyan('Security Tool')),
+      pc.dim(pc.cyan('Status')),
+      pc.dim(pc.cyan('Executable Path')),
+      pc.dim(pc.cyan('Version'))
+    ],
+    style: {
+      head: [],
+      border: ['grey']
+    }
   });
 
   for (const t of tools) {
     table.push([
-      t.name,
-      t.installed ? 'INSTALLED' : 'NOT FOUND',
-      t.path || 'N/A',
-      t.version || 'N/A'
+      pc.gray(t.name),
+      t.installed ? pc.dim(pc.green('INSTALLED')) : pc.dim(pc.red('NOT FOUND')),
+      pc.dim(t.path || 'N/A'),
+      pc.dim(t.version || 'N/A')
     ]);
   }
 

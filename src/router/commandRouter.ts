@@ -1,4 +1,4 @@
-import { CommandController } from '../controller/commandController.js';
+import { CommandController, type AskQuestionCallback } from '../controller/commandController.js';
 
 /**
  * Command Router - Dispatches incoming CLI commands to the command controller
@@ -13,7 +13,7 @@ export class CommandRouter {
   /**
    * Route command to controller handler
    */
-  async route(input: string): Promise<{ shouldQuit?: boolean }> {
-    return await this.controller.handleCommand(input);
+  async route(input: string, askCallback?: AskQuestionCallback): Promise<{ shouldQuit?: boolean }> {
+    return await this.controller.handleCommand(input, askCallback);
   }
 }

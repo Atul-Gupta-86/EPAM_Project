@@ -1,4 +1,5 @@
 import readline from 'node:readline';
+import pc from 'picocolors';
 import { CommandRouter } from '../router/commandRouter.js';
 import { renderNavBar } from './navbar.js';
 import { logger } from '../utils/logger.utils.js';
@@ -10,46 +11,48 @@ export class InteractiveCLI {
     this.router = router || new CommandRouter();
   }
 
-  /**
-   * Start interactive REPL loop
-   */
   async start(): Promise<void> {
     console.log(renderNavBar());
 
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
-      prompt: 'security-cli > '
+      prompt: pc.dim('> ')
     });
+
+    const askCallback = (questionText: string): Promise<string> => {
+      return new Promise<string>((resolve) => {
+        rl.question(questionText, (answer) => {
+          resolve(answer.trim());
+        });
+      });
+    };
 
     rl.prompt();
 
-    for await (const line of rl) {
+    rl.on('line', async (line: string) => {
       const input = line.trim();
-      if (input.length === 0) {
-        rl.prompt();
-        continue;
-      }
-
-      try {
-        const result = await this.router.route(input);
-        if (result.shouldQuit) {
-          rl.close();
-          break;
+      if (input.length > 0) {
+        try {
+          const result = await this.router.route(input, askCallback);
+          if (result.shouldQuit) {
+            rl.close();
+            process.exit(0);
+          }
+          console.log(renderNavBar());
+        } catch (err) {
+          logger.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+          console.log(renderNavBar());
         }
-      } catch (err) {
-        logger.error(`An unexpected error occurred: ${err instanceof Error ? err.message : String(err)}`);
       }
-
-      // Render fixed hintline navigation bar once after each command response
-      console.log(renderNavBar());
       rl.prompt();
-    }
+    });
+
+    rl.on('close', () => {
+      process.exit(0);
+    });
   }
 
-  /**
-   * Run single command mode (for automation/scripting)
-   */
   async runSingleCommand(commandString: string): Promise<void> {
     const result = await this.router.route(commandString);
     console.log(renderNavBar());
