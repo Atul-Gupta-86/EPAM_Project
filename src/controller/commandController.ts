@@ -2,7 +2,6 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { execSync } from 'node:child_process';
 import prompts from 'prompts';
-import pc from 'picocolors';
 
 import { getDatabase } from '../db/connection.js';
 import { logger } from '../utils/logger.utils.js';
@@ -102,7 +101,7 @@ export class CommandController {
 
       case 'quit':
       case 'exit':
-        logger.info('Exiting Security CLI Scanner. Goodbye!');
+        logger.info('Exiting Security CLI Scanner.');
         return { shouldQuit: true };
 
       default:
@@ -138,7 +137,7 @@ export class CommandController {
         const out = execSync(`"${cmd}" ${verFlag}`, { stdio: 'pipe', encoding: 'utf8' }).trim();
         const verLine = out.split('\n')[0]?.trim() || 'Installed';
         return { name, installed: true, path: cmd, version: verLine };
-      } catch (err: unknown) {
+      } catch {
         if (isFileExists) {
           return { name, installed: true, path: cmd, version: 'Detected (Binary Available)' };
         }
@@ -165,7 +164,7 @@ export class CommandController {
   handleClear(): void {
     // Sliding up screen instead of hard reset, preserving user scrollback history
     process.stdout.write('\x1b[2J\x1b[H\n'.repeat(2));
-    logger.banner('=== Security Scanner CLI (Console Refreshed) ===');
+    logger.banner('=== Console Refreshed ===');
   }
 
   /**
@@ -177,7 +176,7 @@ export class CommandController {
     const combinedFile = path.join(this.ctx.combinedResultDir, 'combined_result.sarif.json');
 
     if (!fs.existsSync(combinedFile)) {
-      logger.warn('No scan results found yet. Run "/scan <repo_path>" to perform your first audit.');
+      logger.warn('No scan results found yet. Run "/scan <repo_path>" to perform a scan.');
       return;
     }
 
@@ -185,9 +184,9 @@ export class CommandController {
       const sarif = readJsonFile<SarifReport>(combinedFile);
       const summaries = this.extractSummariesFromSarif(sarif);
 
-      logger.banner('=== LAST SCAN RESULT (STANDARDIZED TABULAR FORMAT) ===');
+      logger.banner('=== LAST SCAN RESULT ===');
       if (latestScan) {
-        console.log(pc.dim(`Target: ${latestScan.target_path} | Time: ${latestScan.timestamp} | Status: ${latestScan.status}`));
+        console.log(`Target: ${latestScan.target_path} | Time: ${latestScan.timestamp} | Status: ${latestScan.status}`);
       }
       console.log(renderScanSummaryTable(summaries));
     } catch (err) {
@@ -245,7 +244,7 @@ export class CommandController {
 
     try {
       copyFileSafely(sourceFile, destFile);
-      logger.success(`Scan result successfully exported to: ${pc.bold(destFile)}`);
+      logger.success(`Scan result successfully exported to: ${destFile}`);
     } catch (err) {
       logger.error(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -264,7 +263,7 @@ export class CommandController {
     }
 
     const targetPath = validation.resolvedPath;
-    logger.info(`Target repository: ${pc.bold(targetPath)}`);
+    logger.info(`Target repository: ${targetPath}`);
 
     // 2. Tool selection: Interactive if TTY, or default to all configured tools
     let selectedTools: string[] = [];
@@ -294,7 +293,7 @@ export class CommandController {
       selectedTools = ['trivy', 'semgrep', 'gitleaks'];
     }
 
-    logger.info(`Starting audit with tools: ${pc.cyan(selectedTools.join(', ').toUpperCase())}...`);
+    logger.info(`Starting audit with tools: ${selectedTools.join(', ').toUpperCase()}...`);
 
     // 3. Sequential Execution of Tools
     const executionResults: ToolExecutionResult[] = [];
@@ -328,7 +327,6 @@ export class CommandController {
     const successfulRuns = executionResults.filter(r => r.success);
     if (successfulRuns.length === 0 && executionResults.length > 0) {
       logger.failedScan();
-      logger.error('All selected tools failed to run successfully on the target repository.');
       return;
     }
 
@@ -349,35 +347,14 @@ export class CommandController {
 
     const combinedFile = path.join(this.ctx.combinedResultDir, 'combined_result.sarif.json');
     writeJsonFile(combinedFile, combinedSarif);
-    logger.success(`Combined SARIF results saved to ${combinedFile}`);
 
-    // 5. Sequential Validation Pipeline
-    // Step 5a: SARIF 2.1.0 Standardization
-    logger.info('Running SARIF 2.1.0 standardization...');
+    // 5. Sequential Validation Pipeline (executed silently without console logging)
     const stdResult = standardizeSarif(combinedFile);
-    if (!stdResult.success) {
-      logger.warn('Standardization note: mismatch detected in result counts.');
-    } else {
-      logger.success(`Standardization complete. ${stdResult.standardizedCount} issues preserved.`);
-    }
-
-    // Step 5b: SARIF Validation & Non-normalized storage with UTF-8 BOM
-    logger.info('Running SARIF validation and UTF-8 BOM encoding...');
-    const valResult = validateAndStoreNonnormalized(
+    validateAndStoreNonnormalized(
       stdResult.outputFilePath,
       individualFiles,
       this.ctx.nonnormalizedDir
     );
-
-    if (!valResult.isValidSarif) {
-      logger.warn(`SARIF validation warnings: ${valResult.details.join('; ')}`);
-    }
-    if (valResult.hasUtf8Bom) {
-      logger.success('UTF-8 BOM formatting verified successfully.');
-    }
-    if (valResult.zeroDataLoss) {
-      logger.success('Data integrity verified: 0% data loss across all tool outputs.');
-    }
 
     // 6. Record scan & findings in Database
     const scanId = `scan-${Date.now()}`;
@@ -413,15 +390,10 @@ export class CommandController {
     db.saveFindings(dbFindings);
 
     // 7. CLI Output - Severity Counts per Tool
-    logger.banner('\n=== SCAN SUMMARY RESULTS ===');
+    console.log('');
     for (const s of summaries) {
-      console.log(
-        `• ${pc.bold(s.tool)} -> ${pc.red(`high: ${s.high}`)}, ${pc.yellow(`medium: ${s.medium}`)}, ${pc.blue(`low: ${s.low}`)} (Total: ${pc.magenta(s.total)})`
-      );
+      console.log(`${s.tool} - high ${s.high} , medium ${s.medium} , low ${s.low}`);
     }
-
-    console.log('\n' + renderScanSummaryTable(summaries));
-    logger.success(`Scan completed! Results stored persistently.`);
   }
 
   /**

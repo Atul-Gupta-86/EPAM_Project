@@ -1,5 +1,3 @@
-import pc from 'picocolors';
-
 export interface NavItem {
   name: string;
   command: string;
@@ -21,11 +19,8 @@ export const NAV_ITEMS: NavItem[] = [
  * Render fixed hintline navigation bar after each response
  */
 export function renderNavBar(): string {
-  const line = '━'.repeat(80);
-  const items = NAV_ITEMS.map(item => pc.cyan(`[ ${pc.bold(item.name)} ]`)).join(' ');
-  const subtitle = pc.dim('Hint: Type any command above or with "/" prefix (e.g., /scan ./my-repo, /result, /help)');
-
-  return `\n${pc.dim(line)}\n${pc.bold(pc.yellow('NAV MENU:'))} ${items}\n${subtitle}\n${pc.dim(line)}`;
+  const items = NAV_ITEMS.map(item => `[${item.name}]`).join(' ');
+  return `\nHintline: ${items}\n`;
 }
 
 /**
@@ -34,26 +29,25 @@ export function renderNavBar(): string {
 export function renderHelpMenu(isTypo = false): string {
   let output = '';
   if (isTypo) {
-    output += `${pc.red(pc.bold('✖ Unknown command or typo detected!'))}\n`;
-    output += `${pc.yellow('Here is the list of all available commands you can run:\n')}\n`;
+    output += 'Unknown command or typo detected!\n';
+    output += 'Here is the list of all available commands you can run:\n\n';
   } else {
-    output += `${pc.bold(pc.cyan('=== Security Scanner CLI Commands ==='))}\n\n`;
+    output += '=== Security Scanner Commands ===\n\n';
   }
 
   for (const item of NAV_ITEMS) {
-    const cmdFormatted = pc.bold(pc.green(item.command.padEnd(20)));
-    output += `  ${cmdFormatted} - ${item.description}\n`;
+    output += `  ${item.command.padEnd(20)} - ${item.description}\n`;
   }
 
-  output += `\n${pc.dim('Examples:')}\n`;
-  output += `  ${pc.cyan('/scan .')}                     Scan current directory\n`;
-  output += `  ${pc.cyan('/scan D:\\Projects\\my-app')}    Scan specific repository\n`;
-  output += `  ${pc.cyan('/result')}                     Display scan summary table\n`;
-  output += `  ${pc.cyan('/findings')}                   View all detailed vulnerabilities\n`;
-  output += `  ${pc.cyan('/export ./my-reports')}        Export SARIF report\n`;
-  output += `  ${pc.cyan('/tools')}                      Inspect Trivy, Semgrep, Gitleaks\n`;
-  output += `  ${pc.cyan('/clear')}                      Reset display viewport\n`;
-  output += `  ${pc.cyan('/quit')}                       Exit scanner\n`;
+  output += '\nExamples:\n';
+  output += '  /scan .                     Scan current directory\n';
+  output += '  /scan D:\\Projects\\my-app    Scan specific repository\n';
+  output += '  /result                     Display scan summary table\n';
+  output += '  /findings                   View all detailed vulnerabilities\n';
+  output += '  /export ./my-reports        Export SARIF report\n';
+  output += '  /tools                      Inspect Trivy, Semgrep, Gitleaks\n';
+  output += '  /clear                      Reset display viewport\n';
+  output += '  /quit                       Exit scanner\n';
 
   return output;
 }

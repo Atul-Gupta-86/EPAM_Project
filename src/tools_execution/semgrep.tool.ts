@@ -20,40 +20,69 @@ export async function runSemgrep(
     }
 
     const tempOut = path.join(resultDir, 'temp_semgrep.sarif');
-    // Run semgrep with sarif output and disabled metrics/version-check
-    const cmd = `"${semgrepCmd}" scan --sarif --output "${tempOut}" --metrics=off --disable-version-check --quiet "${targetPath}"`;
+    if (fs.existsSync(tempOut)) {
+      try { fs.unlinkSync(tempOut); } catch { /* ignore */ }
+    }
 
-    try {
-      execSync(cmd, { stdio: 'pipe', encoding: 'utf8', timeout: 180000 });
-    } catch {
-      // Retry with auto config if needed
+    const isOutputFileValid = (): boolean => {
+      if (!fs.existsSync(tempOut) || fs.statSync(tempOut).size === 0) return false;
       try {
-        const fallbackCmd = `"${semgrepCmd}" scan --config auto --sarif --output "${tempOut}" --metrics=off --disable-version-check --quiet "${targetPath}"`;
-        execSync(fallbackCmd, { stdio: 'pipe', encoding: 'utf8', timeout: 180000 });
-      } catch (cmdErr: unknown) {
-        if (!fs.existsSync(tempOut) || fs.statSync(tempOut).size === 0) {
-          throw cmdErr;
-        }
+        const parsed = JSON.parse(fs.readFileSync(tempOut, 'utf8'));
+        return Array.isArray(parsed?.runs);
+      } catch {
+        return false;
+      }
+    };
+
+    let executed = false;
+
+    // Strategy 1: Run with auto config (Do NOT use --metrics=off as semgrep prohibits it with auto config)
+    try {
+      const cmd = `"${semgrepCmd}" scan --config auto --sarif --output "${tempOut}" --quiet "${targetPath}"`;
+      execSync(cmd, { stdio: 'pipe', encoding: 'utf8', timeout: 300000 });
+      executed = isOutputFileValid();
+    } catch {
+      // Semgrep returns exit code 1 when vulnerabilities/findings exist
+      executed = isOutputFileValid();
+    }
+
+    // Strategy 2: Fallback to standard community rules (p/default)
+    if (!executed) {
+      try {
+        const cmd = `"${semgrepCmd}" scan --config p/default --sarif --output "${tempOut}" --quiet "${targetPath}"`;
+        execSync(cmd, { stdio: 'pipe', encoding: 'utf8', timeout: 300000 });
+        executed = isOutputFileValid();
+      } catch {
+        executed = isOutputFileValid();
       }
     }
 
-    let sarifData: SarifReport;
-    if (fs.existsSync(tempOut)) {
+    // Strategy 3: Fallback without explicit config flag
+    if (!executed) {
+      try {
+        const cmd = `"${semgrepCmd}" scan --sarif --output "${tempOut}" --quiet "${targetPath}"`;
+        execSync(cmd, { stdio: 'pipe', encoding: 'utf8', timeout: 300000 });
+        executed = isOutputFileValid();
+      } catch {
+        executed = isOutputFileValid();
+      }
+    }
+
+    if (executed && fs.existsSync(tempOut)) {
       const content = fs.readFileSync(tempOut, 'utf8');
-      sarifData = JSON.parse(content);
-      fs.unlinkSync(tempOut);
+      const sarifData: SarifReport = JSON.parse(content);
+      try { fs.unlinkSync(tempOut); } catch { /* ignore */ }
+
+      writeJsonFile(outputFile, sarifData);
+      return {
+        tool: 'Semgrep',
+        success: true,
+        sarif: sarifData,
+        outputFilePath: outputFile
+      };
     } else {
       throw new Error('Semgrep produced no SARIF output');
     }
-
-    writeJsonFile(outputFile, sarifData);
-
-    return {
-      tool: 'Semgrep',
-      success: true,
-      sarif: sarifData,
-      outputFilePath: outputFile
-    };
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     const fallbackSarif: SarifReport = {
