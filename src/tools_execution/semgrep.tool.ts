@@ -13,7 +13,6 @@ export async function runSemgrep(
 ): Promise<ToolExecutionResult> {
   const outputFile = path.join(resultDir, 'semgrep_result.sarif.json');
   const semgrepCmd = process.env.SEMGREP_PATH || 'semgrep';
-  const semgrepConfig = process.env.SEMGREP_CONFIG || 'p/default';
 
   try {
     if (!fs.existsSync(resultDir)) {
@@ -21,49 +20,27 @@ export async function runSemgrep(
     }
 
     const tempOut = path.join(resultDir, 'temp_semgrep.sarif');
-    const tempErr = path.join(resultDir, 'temp_semgrep.err');
-
     if (fs.existsSync(tempOut)) {
       try { fs.unlinkSync(tempOut); } catch { /* ignore */ }
     }
-    if (fs.existsSync(tempErr)) {
-      try { fs.unlinkSync(tempErr); } catch { /* ignore */ }
-    }
 
-    const isOutputFileValid = (): boolean => {
-      if (!fs.existsSync(tempOut) || fs.statSync(tempOut).size === 0) return false;
-      try {
-        const parsed = JSON.parse(fs.readFileSync(tempOut, 'utf8'));
-        return Array.isArray(parsed?.runs);
-      } catch {
-        return false;
-      }
-    };
+    // Run standard semgrep scan with --sarif output
+    const cmd = `"${semgrepCmd}" scan --sarif --output "${tempOut}" "${targetPath}"`;
 
-    // Construct robust semgrep execution command
-    // Exclude large vendor & build folders that cause extreme slowdowns
-    const excludes = '--exclude=node_modules --exclude=.git --exclude=dist --exclude=build --exclude=vendor';
-    const cmd = `"${semgrepCmd}" scan --config "${semgrepConfig}" --sarif --output "${tempOut}" --no-git ${excludes} "${targetPath}"`;
-
-    let stderrOutput = '';
     try {
       execSync(cmd, {
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: 'pipe',
         maxBuffer: 50 * 1024 * 1024,
-        timeout: 180000 // 3 minutes timeout
+        timeout: 180000
       });
-    } catch (err: unknown) {
-      // Semgrep returns exit code 1 when findings are present; check if valid SARIF was generated
-      if (err && typeof err === 'object' && 'stderr' in err) {
-        stderrOutput = String((err as { stderr?: Buffer }).stderr || '').trim();
-      }
+    } catch {
+      // Semgrep returns non-zero when vulnerabilities/findings exist, which is normal
     }
 
-    if (isOutputFileValid()) {
+    if (fs.existsSync(tempOut) && fs.statSync(tempOut).size > 0) {
       const content = fs.readFileSync(tempOut, 'utf8');
       const sarifData: SarifReport = JSON.parse(content);
       try { fs.unlinkSync(tempOut); } catch { /* ignore */ }
-      try { if (fs.existsSync(tempErr)) fs.unlinkSync(tempErr); } catch { /* ignore */ }
 
       writeJsonFile(outputFile, sarifData);
       return {
@@ -73,13 +50,7 @@ export async function runSemgrep(
         outputFilePath: outputFile
       };
     } else {
-      // Clean up empty temp file
-      if (fs.existsSync(tempOut)) {
-        try { fs.unlinkSync(tempOut); } catch { /* ignore */ }
-      }
-
-      const failureReason = stderrOutput || 'Semgrep did not produce a valid SARIF output file (check network connection or rule configuration)';
-      throw new Error(failureReason);
+      throw new Error('Semgrep produced no SARIF output');
     }
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
